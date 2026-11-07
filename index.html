@@ -120,9 +120,8 @@
             }
         }
 
-        // --- 2. GENERATOR SZUMU ---
-        function generateNoise(width, height, rng) {
-            const gridSize = 40;
+        // --- 2. GENERATOR SZUMU (z parametrem gęstości) ---
+        function generateNoise(width, height, rng, gridSize) {
             const gridW = Math.ceil(width / gridSize) + 1;
             const gridH = Math.ceil(height / gridSize) + 1;
             
@@ -161,11 +160,43 @@
             return imageData;
         }
 
-        // --- 3. GŁÓWNA FUNKCJA GENERUJĄCA MAPĘ ---
+        // --- 3. FBM (Fractal Brownian Motion) ---
+        // Nakłada na siebie kilka warstw szumu (duże góry, pagórki, detale)
+        function generateFBM(width, height, rng) {
+            let result = new Float32Array(width * height);
+            let amplitude = 1;
+            let frequency = 1;
+            let maxAmplitude = 0;
+
+            // 5 warstw (oktaw)
+            for (let i = 0; i < 5; i++) {
+                const gridSize = 150 / frequency;
+                const noise = generateNoise(width, height, rng, gridSize);
+                
+                for (let j = 0; j < width * height; j++) {
+                    result[j] += noise[j] * amplitude;
+                }
+                
+                maxAmplitude += amplitude;
+                amplitude *= 0.5;
+                frequency *= 2;
+            }
+
+            // Normalizacja (żeby wartości były od 0 do 1)
+            for (let j = 0; j < width * height; j++) {
+                result[j] /= maxAmplitude;
+            }
+            return result;
+        }
+
+        // --- 4. GŁÓWNA FUNKCJA GENERUJĄCA MAPĘ ---
         function generateMap() {
             const seed = document.getElementById('seed-input').value;
             const seaLevel = parseInt(document.getElementById('sea-level').value) / 100;
-            const rng = createRng(seed);
+            
+            // Używamy osobnych RNG dla terenu i dla wybrzeża, żeby na siebie nie wpływały
+            const rngTerrain = createRng(seed + "_terrain");
+            const rngCoast = createRng(seed + "_coast");
             
             const canvas = document.getElementById('map-canvas');
             const ctx = canvas.getContext('2d');
@@ -174,30 +205,43 @@
             canvas.width = size;
             canvas.height = size;
 
-            const rawHeights = generateNoise(size, size, rng);
+            // Generujemy główny teren
+            const rawHeights = generateFBM(size, size, rngTerrain);
+            
+            // Generujemy szum dla wybrzeża (kształt wyspy)
+            const coastNoise = generateNoise(size, size, rngCoast, 100);
+
             const finalHeights = new Float32Array(size * size);
 
             const center = size / 2;
             const maxDist = size / 2;
 
+            // Nakładanie maski wyspy (teraz poszarpanej)
             for (let y = 0; y < size; y++) {
                 for (let x = 0; x < size; x++) {
                     const i = y * size + x;
                     
                     const dx = (x - center) / maxDist;
                     const dy = (y - center) / maxDist;
-                    const dist = Math.sqrt(dx * dx + dy * dy);
                     
-                    let mask = 1.0 - dist * dist * 1.2;
+                    let dist = Math.sqrt(dx * dx + dy * dy);
+                    
+                    // Zaburzamy odległość za pomocą szumu (wybrzeże robi się nieregularne)
+                    dist += (coastNoise[i] - 0.5) * 0.3;
+                    
+                    // Maska (im dalej od środka, tym niżej)
+                    let mask = 1.0 - dist * dist * 1.5;
                     if (mask < 0) mask = 0;
                     if (mask > 1) mask = 1;
 
-                    finalHeights[i] = rawHeights[i] * mask;
+                    // Podnosimy teren w środku i łączymy z maską
+                    finalHeights[i] = (rawHeights[i] * 0.8 + 0.2) * mask;
                 }
             }
 
             const imgData = ctx.createImageData(size, size);
 
+            // Wektor światła
             const lightX = -1;
             const lightY = -1;
             const lightZ = 1.5;
@@ -213,31 +257,38 @@
 
                     let r, g, b;
 
+                    // KOLOROWANIE
                     if (h < seaLevel) {
+                        // Woda
                         const depth = (seaLevel - h) / seaLevel;
                         r = 20; 
                         g = 50 + (1 - depth) * 100; 
                         b = 100 + (1 - depth) * 155;
-                    } else if (h < seaLevel + 0.04) {
+                    } else if (h < seaLevel + 0.03) {
+                        // Piasek
                         r = 220; g = 200; b = 150;
-                    } else if (h < 0.75) {
-                        const greenIntensity = (h - seaLevel) / (0.75 - seaLevel);
+                    } else if (h < 0.7) {
+                        // Trawa
+                        const greenIntensity = (h - seaLevel) / (0.7 - seaLevel);
                         r = 34 + (1 - greenIntensity) * 40; 
                         g = 139 - greenIntensity * 30; 
                         b = 34;
-                    } else if (h < 0.9) {
+                    } else if (h < 0.85) {
+                        // Skały
                         r = 120; g = 120; b = 120;
                     } else {
+                        // Śnieg
                         r = 255; g = 255; b = 255;
                     }
 
+                    // CIENIOWANIE (Hillshade)
                     let hL = h;
                     let hU = h;
                     if (x > 0) hL = finalHeights[i - 1];
                     if (y > 0) hU = finalHeights[i - size];
 
-                    const dx = (hL - h) * 200;
-                    const dy = (hU - h) * 200;
+                    const dx = (hL - h) * 300; // Zwiększony współczynnik = wyraźniejszy cień
+                    const dy = (hU - h) * 300;
 
                     const nx = -dx;
                     const ny = -dy;
@@ -265,6 +316,7 @@
             ctx.putImageData(imgData, 0, 0);
         }
 
+        // --- 5. OBSŁUGA ZDARZEŃ ---
         document.getElementById('generate-btn').addEventListener('click', generateMap);
 
         const seaSlider = document.getElementById('sea-level');
@@ -277,7 +329,6 @@
 
         generateMap();
 
-        // Rejestracja Service Workera
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('sw.js').catch(err => {
                 console.log('Błąd rejestracji SW:', err);
