@@ -1,1 +1,173 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>SeedForge</title>
+    <link rel="manifest" href="manifest.json">
+    <style>
+        body {
+            margin: 0;
+            background-color: #1a1a1a;
+            color: white;
+            font-family: sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+        #controls {
+            padding: 15px;
+            display: flex;
+            gap: 10px;
+            width: 100%;
+            box-sizing: border-box;
+            background: #2a2a2a;
+        }
+        input, button {
+            padding: 10px;
+            border-radius: 5px;
+            border: none;
+            font-size: 16px;
+        }
+        input { flex-grow: 1; }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            font-weight: bold;
+        }
+        #canvas-container {
+            flex-grow: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            width: 100%;
+            overflow: hidden;
+        }
+        canvas {
+            max-width: 100%;
+            max-height: 100%;
+            /* Na telefonach canvas musi się skalować */
+            object-fit: contain; 
+        }
+    </style>
+</head>
+<body>
 
+    <div id="controls">
+        <input type="text" id="seed-input" value="wyspa-42" placeholder="Wpisz seed...">
+        <button id="generate-btn">Generuj</button>
+    </div>
+
+    <div id="canvas-container">
+        <canvas id="map-canvas"></canvas>
+    </div>
+
+    <script>
+        // 1. Nasz silnik losujący (Mulberry32) - zawsze daje te same liczby dla tego samego seeda
+        function createRng(seedString) {
+            let h = 1779033703 ^ seedString.length;
+            for (let i = 0; i < seedString.length; i++) {
+                h = Math.imul(h ^ seedString.charCodeAt(i), 3432918353);
+                h = h << 13 | h >>> 19;
+            }
+            let a = h >>> 0;
+            return function() {
+                a |= 0; a = a + 0x6D2B79F5 | 0;
+                let t = Math.imul(a ^ a >>> 15, 1 | a);
+                t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+                return ((t ^ t >>> 14) >>> 0) / 4294967296;
+            }
+        }
+
+        // 2. Funkcja szumu (Value Noise) - tworzy gładkie górki
+        function generateNoise(width, height, rng) {
+            const gridSize = 32; // Im mniej, tym większe góry
+            const gridW = Math.ceil(width / gridSize) + 1;
+            const gridH = Math.ceil(height / gridSize) + 1;
+            
+            // Tworzymy siatkę losowych punktów
+            const grid = [];
+            for (let y = 0; y < gridH; y++) {
+                const row = [];
+                for (let x = 0; x < gridW; x++) {
+                    row.push(rng());
+                }
+                grid.push(row);
+            }
+
+            // Wygładzamy (interpolacja)
+            const imageData = new Float32Array(width * height);
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    const gx = x / gridSize;
+                    const gy = y / gridSize;
+                    
+                    const x0 = Math.floor(gx);
+                    const y0 = Math.floor(gy);
+                    const x1 = x0 + 1;
+                    const y1 = y0 + 1;
+                    
+                    const tx = gx - x0;
+                    const ty = gy - y0;
+                    
+                    // Wygładzenie (smoothstep)
+                    const sx = tx * tx * (3 - 2 * tx);
+                    const sy = ty * ty * (3 - 2 * ty);
+                    
+                    const top = grid[y0][x0] * (1 - sx) + grid[y0][x1] * sx;
+                    const bottom = grid[y1][x0] * (1 - sx) + grid[y1][x1] * sx;
+                    
+                    imageData[y * width + x] = top * (1 - sy) + bottom * sy;
+                }
+            }
+            return imageData;
+        }
+
+        // 3. Główna funkcja generująca mapę
+        function generateMap() {
+            const seed = document.getElementById('seed-input').value;
+            const rng = createRng(seed);
+            
+            const canvas = document.getElementById('map-canvas');
+            const ctx = canvas.getContext('2d');
+            
+            // Ustawiamy rozmiar mapy (na razie 512x512)
+            const size = 512;
+            canvas.width = size;
+            canvas.height = size;
+
+            // Generujemy wysokości
+            const heights = generateNoise(size, size, rng);
+
+            // Rysujemy piksele
+            const imgData = ctx.createImageData(size, size);
+            for (let i = 0; i < size * size; i++) {
+                const h = heights[i];
+                
+                // Kolorowanie wysokości (na razie szare)
+                const color = Math.floor(h * 255);
+                
+                imgData.data[i * 4] = color;     // R
+                imgData.data[i * 4 + 1] = color; // G
+                imgData.data[i * 4 + 2] = color; // B
+                imgData.data[i * 4 + 3] = 255;   // Alpha (pełne krycie)
+            }
+            
+            ctx.putImageData(imgData, 0, 0);
+        }
+
+        // Podpinamy przycisk
+        document.getElementById('generate-btn').addEventListener('click', generateMap);
+
+        // Generujemy pierwszą mapę przy starcie
+        generateMap();
+
+        // Rejestracja Service Workera (dla PWA)
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('sw.js');
+        }
+    </script>
+</body>
+</html>
