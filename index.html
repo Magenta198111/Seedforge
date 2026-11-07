@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>SeedForge</title>
     <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#1a1a1a">
     <style>
         body {
             margin: 0;
@@ -104,7 +105,6 @@
 
     <script>
         // --- 1. SILNIK LOSUJĄCY (RNG) ---
-        // Zamienia tekst (seed) na powtarzalne liczby.
         function createRng(seedString) {
             let h = 1779033703 ^ seedString.length;
             for (let i = 0; i < seedString.length; i++) {
@@ -121,9 +121,8 @@
         }
 
         // --- 2. GENERATOR SZUMU ---
-        // Tworzy gładkie "górki i doliny" na podstawie losowych punktów.
         function generateNoise(width, height, rng) {
-            const gridSize = 40; // Rozmiar kratki (im większy, tym łagodniejsze góry)
+            const gridSize = 40;
             const gridW = Math.ceil(width / gridSize) + 1;
             const gridH = Math.ceil(height / gridSize) + 1;
             
@@ -150,7 +149,6 @@
                     const tx = gx - x0;
                     const ty = gy - y0;
                     
-                    // Wygładzanie (smoothstep) - zapobiega ostrym kantom
                     const sx = tx * tx * (3 - 2 * tx);
                     const sy = ty * ty * (3 - 2 * ty);
                     
@@ -172,17 +170,13 @@
             const canvas = document.getElementById('map-canvas');
             const ctx = canvas.getContext('2d');
             
-            const size = 512; // Rozdzielczość mapy
+            const size = 512;
             canvas.width = size;
             canvas.height = size;
 
-            // Pobieramy surowe wysokości (szum)
             const rawHeights = generateNoise(size, size, rng);
-
-            // Tworzymy nową tablicę na ostateczne wysokości (z maską wyspy)
             const finalHeights = new Float32Array(size * size);
 
-            // Nakładamy maskę wyspy (żeby brzegi opadały do wody)
             const center = size / 2;
             const maxDist = size / 2;
 
@@ -190,25 +184,20 @@
                 for (let x = 0; x < size; x++) {
                     const i = y * size + x;
                     
-                    // Obliczamy odległość od środka (0 w środku, 1 na brzegu)
                     const dx = (x - center) / maxDist;
                     const dy = (y - center) / maxDist;
                     const dist = Math.sqrt(dx * dx + dy * dy);
                     
-                    // Maska: w środku 1.0, na brzegach 0.0 (z płynnym przejściem)
                     let mask = 1.0 - dist * dist * 1.2;
                     if (mask < 0) mask = 0;
                     if (mask > 1) mask = 1;
 
-                    // Łączymy szum z maską
                     finalHeights[i] = rawHeights[i] * mask;
                 }
             }
 
-            // Renderowanie z cieniowaniem (Hillshade) i kolorami
             const imgData = ctx.createImageData(size, size);
 
-            // Wektor światła (symulujemy słońce świecące z lewego górnego rogu)
             const lightX = -1;
             const lightY = -1;
             const lightZ = 1.5;
@@ -224,62 +213,47 @@
 
                     let r, g, b;
 
-                    // --- KOLOROWANIE NA PODSTAWIE WYSOKOŚCI ---
                     if (h < seaLevel) {
-                        // WODA (im głębiej, tym ciemniejsza)
                         const depth = (seaLevel - h) / seaLevel;
                         r = 20; 
                         g = 50 + (1 - depth) * 100; 
                         b = 100 + (1 - depth) * 155;
                     } else if (h < seaLevel + 0.04) {
-                        // PLAŻA (piasek)
                         r = 220; g = 200; b = 150;
                     } else if (h < 0.75) {
-                        // TRAWA / LAS
-                        // Dodajemy lekki gradient, żeby nie był to płaski zielony
                         const greenIntensity = (h - seaLevel) / (0.75 - seaLevel);
                         r = 34 + (1 - greenIntensity) * 40; 
                         g = 139 - greenIntensity * 30; 
                         b = 34;
                     } else if (h < 0.9) {
-                        // GÓRY (skały)
                         r = 120; g = 120; b = 120;
                     } else {
-                        // ŚNIEG
                         r = 255; g = 255; b = 255;
                     }
 
-                    // --- CIENIOWANIE (HILLSHADE) ---
-                    // Obliczamy nachylenie terenu, patrząc na sąsiadów z lewej i z góry
                     let hL = h;
                     let hU = h;
                     if (x > 0) hL = finalHeights[i - 1];
                     if (y > 0) hU = finalHeights[i - size];
 
-                    // Różnica wysokości
-                    const dx = (hL - h) * 200; // Współczynnik 200 wzmacnia efekt
+                    const dx = (hL - h) * 200;
                     const dy = (hU - h) * 200;
 
-                    // Obliczamy wektor normalny (prostopadły do powierzchni)
                     const nx = -dx;
                     const ny = -dy;
                     const nz = 1.0;
                     const nLength = Math.sqrt(nx*nx + ny*ny + nz*nz);
 
-                    // Iloczyn skalarny (dot product) - sprawdza, jak bardzo teren jest zwrócony do słońca
                     let shade = (nx/nLength * lx) + (ny/nLength * ly) + (nz/nLength * lz);
                     
-                    // Jeśli woda, to cieniujemy tylko delikatnie, żeby wyglądała płasko
                     if (h < seaLevel) {
                         shade = 0.9 + shade * 0.1; 
                     }
 
-                    // Nakładamy cień na kolor
                     r = Math.max(0, Math.min(255, r * shade));
                     g = Math.max(0, Math.min(255, g * shade));
                     b = Math.max(0, Math.min(255, b * shade));
 
-                    // Zapisujemy piksel
                     const p = i * 4;
                     imgData.data[p] = r;
                     imgData.data[p + 1] = g;
@@ -288,16 +262,11 @@
                 }
             }
 
-            // Rysujemy gotowy obraz na ekranie
             ctx.putImageData(imgData, 0, 0);
         }
 
-        // --- 4. OBSŁUGA ZDARZEŃ (PRZYCISKI, SUWAKI) ---
-        
-        // Przycisk "Generuj"
         document.getElementById('generate-btn').addEventListener('click', generateMap);
 
-        // Suwak poziomu morza (odświeża mapę na żywo podczas przesuwania)
         const seaSlider = document.getElementById('sea-level');
         const seaValDisplay = document.getElementById('sea-level-val');
         
@@ -306,10 +275,9 @@
             generateMap();
         });
 
-        // Pierwsze uruchomienie
         generateMap();
 
-        // Rejestracja Service Workera (wymagane dla PWA - offline)
+        // Rejestracja Service Workera
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('sw.js').catch(err => {
                 console.log('Błąd rejestracji SW:', err);
