@@ -9,55 +9,93 @@
         body {
             margin: 0;
             background-color: #1a1a1a;
-            color: white;
-            font-family: sans-serif;
+            color: #eee;
+            font-family: system-ui, -apple-system, sans-serif;
             display: flex;
             flex-direction: column;
-            align-items: center;
             height: 100vh;
             overflow: hidden;
         }
         #controls {
-            padding: 15px;
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            background: #2a2a2a;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            z-index: 10;
+        }
+        .control-row {
             display: flex;
             gap: 10px;
-            width: 100%;
-            box-sizing: border-box;
-            background: #2a2a2a;
+            align-items: center;
         }
-        input, button {
-            padding: 10px;
-            border-radius: 5px;
-            border: none;
+        input[type="text"] {
+            flex-grow: 1;
+            padding: 12px;
+            border-radius: 8px;
+            border: 1px solid #444;
+            background: #1a1a1a;
+            color: white;
             font-size: 16px;
+            outline: none;
         }
-        input { flex-grow: 1; }
+        input[type="text"]:focus {
+            border-color: #4CAF50;
+        }
         button {
+            padding: 12px 20px;
+            border-radius: 8px;
+            border: none;
             background-color: #4CAF50;
             color: white;
             font-weight: bold;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        button:active {
+            background-color: #3e8e41;
+        }
+        .slider-container {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 14px;
+        }
+        input[type="range"] {
+            flex-grow: 1;
+            accent-color: #4CAF50;
         }
         #canvas-container {
             flex-grow: 1;
             display: flex;
             justify-content: center;
             align-items: center;
-            width: 100%;
+            background: #111;
             overflow: hidden;
+            position: relative;
         }
         canvas {
             max-width: 100%;
             max-height: 100%;
-            /* Na telefonach canvas musi się skalować */
-            object-fit: contain; 
+            object-fit: contain;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
         }
     </style>
 </head>
 <body>
 
     <div id="controls">
-        <input type="text" id="seed-input" value="wyspa-42" placeholder="Wpisz seed...">
-        <button id="generate-btn">Generuj</button>
+        <div class="control-row">
+            <input type="text" id="seed-input" value="wyspa-42" placeholder="Wpisz seed...">
+            <button id="generate-btn">Generuj</button>
+        </div>
+        <div class="slider-container">
+            <label for="sea-level">Poziom morza:</label>
+            <input type="range" id="sea-level" min="10" max="80" value="45">
+            <span id="sea-level-val">45%</span>
+        </div>
     </div>
 
     <div id="canvas-container">
@@ -65,7 +103,8 @@
     </div>
 
     <script>
-        // 1. Nasz silnik losujący (Mulberry32) - zawsze daje te same liczby dla tego samego seeda
+        // --- 1. SILNIK LOSUJĄCY (RNG) ---
+        // Zamienia tekst (seed) na powtarzalne liczby.
         function createRng(seedString) {
             let h = 1779033703 ^ seedString.length;
             for (let i = 0; i < seedString.length; i++) {
@@ -81,13 +120,13 @@
             }
         }
 
-        // 2. Funkcja szumu (Value Noise) - tworzy gładkie górki
+        // --- 2. GENERATOR SZUMU ---
+        // Tworzy gładkie "górki i doliny" na podstawie losowych punktów.
         function generateNoise(width, height, rng) {
-            const gridSize = 32; // Im mniej, tym większe góry
+            const gridSize = 40; // Rozmiar kratki (im większy, tym łagodniejsze góry)
             const gridW = Math.ceil(width / gridSize) + 1;
             const gridH = Math.ceil(height / gridSize) + 1;
             
-            // Tworzymy siatkę losowych punktów
             const grid = [];
             for (let y = 0; y < gridH; y++) {
                 const row = [];
@@ -97,7 +136,6 @@
                 grid.push(row);
             }
 
-            // Wygładzamy (interpolacja)
             const imageData = new Float32Array(width * height);
             for (let y = 0; y < height; y++) {
                 for (let x = 0; x < width; x++) {
@@ -112,7 +150,7 @@
                     const tx = gx - x0;
                     const ty = gy - y0;
                     
-                    // Wygładzenie (smoothstep)
+                    // Wygładzanie (smoothstep) - zapobiega ostrym kantom
                     const sx = tx * tx * (3 - 2 * tx);
                     const sy = ty * ty * (3 - 2 * ty);
                     
@@ -125,48 +163,157 @@
             return imageData;
         }
 
-        // 3. Główna funkcja generująca mapę
+        // --- 3. GŁÓWNA FUNKCJA GENERUJĄCA MAPĘ ---
         function generateMap() {
             const seed = document.getElementById('seed-input').value;
+            const seaLevel = parseInt(document.getElementById('sea-level').value) / 100;
             const rng = createRng(seed);
             
             const canvas = document.getElementById('map-canvas');
             const ctx = canvas.getContext('2d');
             
-            // Ustawiamy rozmiar mapy (na razie 512x512)
-            const size = 512;
+            const size = 512; // Rozdzielczość mapy
             canvas.width = size;
             canvas.height = size;
 
-            // Generujemy wysokości
-            const heights = generateNoise(size, size, rng);
+            // Pobieramy surowe wysokości (szum)
+            const rawHeights = generateNoise(size, size, rng);
 
-            // Rysujemy piksele
-            const imgData = ctx.createImageData(size, size);
-            for (let i = 0; i < size * size; i++) {
-                const h = heights[i];
-                
-                // Kolorowanie wysokości (na razie szare)
-                const color = Math.floor(h * 255);
-                
-                imgData.data[i * 4] = color;     // R
-                imgData.data[i * 4 + 1] = color; // G
-                imgData.data[i * 4 + 2] = color; // B
-                imgData.data[i * 4 + 3] = 255;   // Alpha (pełne krycie)
+            // Tworzymy nową tablicę na ostateczne wysokości (z maską wyspy)
+            const finalHeights = new Float32Array(size * size);
+
+            // Nakładamy maskę wyspy (żeby brzegi opadały do wody)
+            const center = size / 2;
+            const maxDist = size / 2;
+
+            for (let y = 0; y < size; y++) {
+                for (let x = 0; x < size; x++) {
+                    const i = y * size + x;
+                    
+                    // Obliczamy odległość od środka (0 w środku, 1 na brzegu)
+                    const dx = (x - center) / maxDist;
+                    const dy = (y - center) / maxDist;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    
+                    // Maska: w środku 1.0, na brzegach 0.0 (z płynnym przejściem)
+                    let mask = 1.0 - dist * dist * 1.2;
+                    if (mask < 0) mask = 0;
+                    if (mask > 1) mask = 1;
+
+                    // Łączymy szum z maską
+                    finalHeights[i] = rawHeights[i] * mask;
+                }
             }
-            
+
+            // Renderowanie z cieniowaniem (Hillshade) i kolorami
+            const imgData = ctx.createImageData(size, size);
+
+            // Wektor światła (symulujemy słońce świecące z lewego górnego rogu)
+            const lightX = -1;
+            const lightY = -1;
+            const lightZ = 1.5;
+            const lightLength = Math.sqrt(lightX*lightX + lightY*lightY + lightZ*lightZ);
+            const lx = lightX / lightLength;
+            const ly = lightY / lightLength;
+            const lz = lightZ / lightLength;
+
+            for (let y = 0; y < size; y++) {
+                for (let x = 0; x < size; x++) {
+                    const i = y * size + x;
+                    const h = finalHeights[i];
+
+                    let r, g, b;
+
+                    // --- KOLOROWANIE NA PODSTAWIE WYSOKOŚCI ---
+                    if (h < seaLevel) {
+                        // WODA (im głębiej, tym ciemniejsza)
+                        const depth = (seaLevel - h) / seaLevel;
+                        r = 20; 
+                        g = 50 + (1 - depth) * 100; 
+                        b = 100 + (1 - depth) * 155;
+                    } else if (h < seaLevel + 0.04) {
+                        // PLAŻA (piasek)
+                        r = 220; g = 200; b = 150;
+                    } else if (h < 0.75) {
+                        // TRAWA / LAS
+                        // Dodajemy lekki gradient, żeby nie był to płaski zielony
+                        const greenIntensity = (h - seaLevel) / (0.75 - seaLevel);
+                        r = 34 + (1 - greenIntensity) * 40; 
+                        g = 139 - greenIntensity * 30; 
+                        b = 34;
+                    } else if (h < 0.9) {
+                        // GÓRY (skały)
+                        r = 120; g = 120; b = 120;
+                    } else {
+                        // ŚNIEG
+                        r = 255; g = 255; b = 255;
+                    }
+
+                    // --- CIENIOWANIE (HILLSHADE) ---
+                    // Obliczamy nachylenie terenu, patrząc na sąsiadów z lewej i z góry
+                    let hL = h;
+                    let hU = h;
+                    if (x > 0) hL = finalHeights[i - 1];
+                    if (y > 0) hU = finalHeights[i - size];
+
+                    // Różnica wysokości
+                    const dx = (hL - h) * 200; // Współczynnik 200 wzmacnia efekt
+                    const dy = (hU - h) * 200;
+
+                    // Obliczamy wektor normalny (prostopadły do powierzchni)
+                    const nx = -dx;
+                    const ny = -dy;
+                    const nz = 1.0;
+                    const nLength = Math.sqrt(nx*nx + ny*ny + nz*nz);
+
+                    // Iloczyn skalarny (dot product) - sprawdza, jak bardzo teren jest zwrócony do słońca
+                    let shade = (nx/nLength * lx) + (ny/nLength * ly) + (nz/nLength * lz);
+                    
+                    // Jeśli woda, to cieniujemy tylko delikatnie, żeby wyglądała płasko
+                    if (h < seaLevel) {
+                        shade = 0.9 + shade * 0.1; 
+                    }
+
+                    // Nakładamy cień na kolor
+                    r = Math.max(0, Math.min(255, r * shade));
+                    g = Math.max(0, Math.min(255, g * shade));
+                    b = Math.max(0, Math.min(255, b * shade));
+
+                    // Zapisujemy piksel
+                    const p = i * 4;
+                    imgData.data[p] = r;
+                    imgData.data[p + 1] = g;
+                    imgData.data[p + 2] = b;
+                    imgData.data[p + 3] = 255;
+                }
+            }
+
+            // Rysujemy gotowy obraz na ekranie
             ctx.putImageData(imgData, 0, 0);
         }
 
-        // Podpinamy przycisk
+        // --- 4. OBSŁUGA ZDARZEŃ (PRZYCISKI, SUWAKI) ---
+        
+        // Przycisk "Generuj"
         document.getElementById('generate-btn').addEventListener('click', generateMap);
 
-        // Generujemy pierwszą mapę przy starcie
+        // Suwak poziomu morza (odświeża mapę na żywo podczas przesuwania)
+        const seaSlider = document.getElementById('sea-level');
+        const seaValDisplay = document.getElementById('sea-level-val');
+        
+        seaSlider.addEventListener('input', (e) => {
+            seaValDisplay.textContent = e.target.value + '%';
+            generateMap();
+        });
+
+        // Pierwsze uruchomienie
         generateMap();
 
-        // Rejestracja Service Workera (dla PWA)
+        // Rejestracja Service Workera (wymagane dla PWA - offline)
         if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('sw.js');
+            navigator.serviceWorker.register('sw.js').catch(err => {
+                console.log('Błąd rejestracji SW:', err);
+            });
         }
     </script>
 </body>
